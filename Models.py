@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from scipy.ndimage import rotate
 import Utils
+from Utils import Constants
 import cv2
 from facenet_pytorch import InceptionResnetV1
 
@@ -200,6 +201,117 @@ class FacenetModel(torch.nn.Module):
         x = x#.to(self.device)
         x = self.base_model(x)
         x = self.embedding_dropout(x)
+        for layer in self.hidden_layers:
+            x = layer(x)
+        
+        x_st = self.apply_layers(x,self.st_layers)
+        x_age = self.apply_layers(x,self.age_layers)
+        x_gender = self.apply_layers(x,self.gender_layers)
+        return [x_st,x_age,x_gender]
+    
+    
+class DualFacenetModel(torch.nn.Module):
+    
+    def __init__(self,
+                 base_model = None,
+                 feature_extractor = None,
+                 hidden_dims = [400],
+                 st_dims = [600],
+                 age_dims = [400],
+                 gender_dims = [400],
+                 embedding_dropout=.3,
+                 st_dropout = .2,
+                 age_dropout = .2,
+                 gender_dropout = .2,
+                 base_name='model',
+                 fine_tune=False,
+                    ):
+        super(DualFacenetModel,self).__init__()
+        
+        if base_model is None:
+            base_model = InceptionResnetV1(pretrained='vggface2')
+            base_name = 'dualfacenet'
+        else:
+            base_name = base_model.get_identifier()
+        for param in base_model.parameters():
+            param.requires_grad = True
+        
+        if feature_extractor is None:
+            feature_extractor = InceptionResnetV1(pretrained='vggface2')
+        for param in feature_extractor.parameters():
+            param.requires_grad = fine_tune
+    
+        self.base_model = base_model
+        self.feature_extractor = feature_extractor
+        
+        self.embedding_dropout = torch.nn.Dropout(p=embedding_dropout)
+        curr_dim = base_model.logits.in_features
+        hidden_layers = []
+        
+        for i,size in enumerate(hidden_dims):
+            layer = torch.nn.Linear(curr_dim, size)
+            curr_dim = size
+            hidden_layers.append(layer)
+            hidden_layers.append(torch.nn.ReLU())
+            
+        self.hidden_layers = torch.nn.ModuleList(hidden_layers)
+        self.st_layers = self.make_output(curr_dim,st_dims,10,st_dropout)
+        self.age_layers = self.make_output(curr_dim,age_dims,4,age_dropout)
+        self.gender_layers = self.make_output(curr_dim,gender_dims,2,gender_dropout)
+        
+        name_string = 'dual_' + base_name 
+        if fine_tune:
+            name_string += '_finetune'
+        
+        def add_dims(n,dims,prefix):
+            for dim in dims:
+                n += '_'+prefix+str(dim)
+            return n
+        
+        name_string = add_dims(name_string,hidden_dims,'h')
+        name_string = add_dims(name_string,st_dims,'st')
+        
+        name_string = add_dims(name_string,age_dims,'a')
+        name_string = add_dims(name_string,gender_dims,'g')
+                    
+        name_string += '_ed' + str(embedding_dropout).replace('0.','')
+        name_string += '_std' + str(st_dropout).replace('0.','')
+        name_string += '_ad' + str(age_dropout).replace('0.','')
+        name_string += '_gd' + str(gender_dropout).replace('0.','')
+                               
+        self.name_string = name_string
+                               
+    def make_output(self,start_size,sizes,n_classes,dropout):
+        layers = []
+        curr_size = start_size
+        for size in sizes:
+            layer = torch.nn.Linear(curr_size,size)
+            curr_size = size
+            layers.append(layer)
+            layers.append(torch.nn.ReLU())
+        if dropout > 0:
+            layers.append(torch.nn.Dropout(p=dropout))
+        layers.append(torch.nn.Linear(curr_size,n_classes))
+        layers.append(torch.nn.ReLU())
+        softmax = torch.nn.Softmax(dim=-1)
+        layers.append(softmax)
+        return torch.nn.ModuleList(layers)
+    
+    def get_identifier(self):
+        return self.name_string
+    
+    def apply_layers(self,x,layers):
+        new_x = x
+        for l in layers:
+            new_x = l(new_x)
+        return new_x
+    
+    def forward(self,x):
+        x = self.base_model(x)
+        xf = self.feature_extractor(x)
+        x = self.embedding_dropout(x)
+        x = torch.cat((x,xf),axis=-1)
+        
         for layer in self.hidden_layers:
             x = layer(x)
         

@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
 class Constants():
     
@@ -38,3 +39,15 @@ def resnet_preprocess(x):
     #https://github.com/kentsommer/keras-inceptionV4/issues/5#issuecomment-287673694
     x = 2*(x-1) 
     return x
+
+def plot_selection(images,rows=20,columns=3):
+    fig = plt.figure(figsize=(3*columns, 3*rows))
+    # setting values to rows and column variables
+    for i in range(rows*columns):
+        if i >= len(images):
+            return
+        image = images[i]
+        fig.add_subplot(rows, columns, i+1)
+        plt.imshow(image)
+        
+    return
