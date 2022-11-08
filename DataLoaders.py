@@ -73,11 +73,12 @@ def imgs_to_torch(array,convert=False):
 
 class Augmentor():
     
-    def __init__(self,image_size = None,noise_sigma=.03):
+    def __init__(self,image_size = None,noise_sigma=.03,augment_prob = .8):
         if image_size is None:
             image_size = Constants.resnet_size
         self.image_size = image_size
         self.noise_sigma = noise_sigma
+        self.augment_prob = augment_prob
         
     def random_range(self,min_ratio = 0.01, max_ratio = .9):
         return max(min(max_ratio,1.5*np.random.random()), min_ratio)
@@ -124,17 +125,18 @@ class Augmentor():
         return img
     
     def augment_image(self,img,crop=True,rotate=True,noise=True,color_shift=False):
-        shape = img.shape
-        if img.ndim < 3 or shape[0] == 0 or shape[1] == 0 or shape[2] == 0:
-            print('bad shape',shape)
-        if crop:
-            img = self.random_crop(img)
-        if rotate:
-            img = self.random_rotation(img)
-        if noise:
-            img = self.gaussian_noise(img)
-        if color_shift:
-            img = self.color_shift(img)
+        if np.random.random() < self.augment_prob:
+            shape = img.shape
+            if img.ndim < 3 or shape[0] == 0 or shape[1] == 0 or shape[2] == 0:
+                print('bad shape',shape)
+            if crop:
+                img = self.random_crop(img)
+            if rotate:
+                img = self.random_rotation(img)
+            if noise:
+                img = self.gaussian_noise(img)
+            if color_shift:
+                img = self.color_shift(img)
         img = self.format_image(img)
         return img
     
