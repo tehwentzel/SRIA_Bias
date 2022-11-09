@@ -1,5 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix
+from itertools import product
 
 class Constants():
     
@@ -14,6 +16,137 @@ class Constants():
     }
     default_size = 256
     resnet_size = 160
+    
+class ConfusionMatrixDisplay:
+
+    def __init__(self, confusion_matrix, *, display_labels=None):
+        self.confusion_matrix = confusion_matrix
+        self.display_labels = display_labels
+
+    def plot(
+        self,
+        *,
+        include_values=True,
+        cmap="viridis",
+        xticks_rotation="horizontal",
+        values_format=None,
+        ax=None,
+        colorbar=True,
+        title=None,
+        im_kw=None,
+    ):
+        import matplotlib.pyplot as plt
+
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            fig = ax.figure
+
+        cm = self.confusion_matrix
+        n_classes = cm.shape[0]
+
+        default_im_kw = dict(interpolation="nearest", cmap=cmap)
+        im_kw = im_kw or {}
+        im_kw = {**default_im_kw, **im_kw}
+
+        self.im_ = ax.imshow(cm, **im_kw)
+        self.text_ = None
+        cmap_min, cmap_max = self.im_.cmap(0), self.im_.cmap(1.0)
+
+        if include_values:
+            self.text_ = np.empty_like(cm, dtype=object)
+
+            # print text with appropriate color depending on background
+            thresh = (cm.max() + cm.min()) / 2.0
+
+            for i, j in product(range(n_classes), range(n_classes)):
+                color = cmap_max if cm[i, j] < thresh else cmap_min
+
+                if values_format is None:
+                    text_cm = format(cm[i, j], ".2g")
+                    if cm.dtype.kind != "f":
+                        text_d = format(cm[i, j], "d")
+                        if len(text_d) < len(text_cm):
+                            text_cm = text_d
+                else:
+                    text_cm = format(cm[i, j], values_format)
+
+                self.text_[i, j] = ax.text(
+                    j, i, text_cm, ha="center", va="center", color=color
+                )
+
+        if self.display_labels is None:
+            display_labels = np.arange(n_classes)
+        else:
+            display_labels = self.display_labels
+        if colorbar:
+            fig.colorbar(self.im_, ax=ax)
+        ax.set(
+            xticks=np.arange(n_classes),
+            yticks=np.arange(n_classes),
+            xticklabels=display_labels,
+            yticklabels=display_labels,
+            ylabel="True label",
+            xlabel="Predicted label",
+        )
+
+        ax.set_ylim((n_classes - 0.5, -0.5))
+        plt.setp(ax.get_xticklabels(), rotation=xticks_rotation)
+        if title is not None:
+            ax.set_title(title)
+        self.figure_ = fig
+        self.ax_ = ax
+        return self
+
+    @classmethod
+    def from_predictions(
+        cls,
+        y_true,
+        y_pred,
+        *,
+        labels=None,
+        sample_weight=None,
+        normalize=None,
+        display_labels=None,
+        include_values=True,
+        xticks_rotation="horizontal",
+        values_format=None,
+        cmap="Blues",
+        ax=None,
+        colorbar=True,
+        title=None,
+        im_kw=None,
+    ):
+        
+        if y_pred.ndim > 1:
+            y_pred = np.argmax(y_pred,axis=1)
+            
+        if display_labels is None:
+            if labels is None:
+                display_labels = list(set(np.unique(y_true)).union(set(np.unique(y_pred))) )
+            else:
+                display_labels = labels
+
+        cm = confusion_matrix(
+            y_true,
+            y_pred,
+            sample_weight=sample_weight,
+            labels=labels,
+            normalize=normalize,
+        )
+
+        disp = cls(confusion_matrix=cm, display_labels=display_labels)
+
+        return disp.plot(
+            include_values=include_values,
+            cmap=cmap,
+            ax=ax,
+            xticks_rotation=xticks_rotation,
+            values_format=values_format,
+            colorbar=colorbar,
+            title=title,
+            im_kw=im_kw,
+        )
     
 def prewhiten(x):
     if x.ndim == 4:

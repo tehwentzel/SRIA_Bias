@@ -6,6 +6,7 @@ import Utils
 from Utils import Constants
 import cv2
 from facenet_pytorch import InceptionResnetV1
+import torchvision
 
 class ConvBlock(torch.nn.Module):
     def __init__(self, in_channels, out_channels,kernel_size):
@@ -308,12 +309,12 @@ class HistogramModel(BaseModel):
     def __init__(self,
                  base_model = None,
                  feature_extractor = None,
-                 hidden_dims = [400],
+                 hidden_dims = [600],
                  st_dims = [600],
                  age_dims = [400],
                  gender_dims = [400],
                  histogram_dims = [400],
-                 histogram_dropout = .1,
+                 histogram_dropout = .01,
                  embedding_dropout=.3,
                  st_dropout = .2,
                  age_dropout = .2,
@@ -401,44 +402,15 @@ class HistogramModel(BaseModel):
         x_age = self.apply_layers(x,self.age_layers)
         x_gender = self.apply_layers(x,self.gender_layers)
         return [x_st,x_age,x_gender]
-
-class DualHistogramModel(BaseModel):
+    
+class DualHistogramModel(DualFacenetModel):
     
     def __init__(self,
-                 base_model = None,
-                 feature_extractor = None,
-                 hidden_dims = [400],
-                 st_dims = [600],
-                 age_dims = [400],
-                 gender_dims = [400],
-                 histogram_dims = [400],
+                 histogram_dims = [10],
                  histogram_dropout = .1,
-                 embedding_dropout=.3,
-                 st_dropout = .2,
-                 age_dropout = .2,
-                 gender_dropout = .2,
-                 base_name='model',
-                 fine_tune=False,
+                 **kwargs
                     ):
-        super(DualHistogramModel,self).__init__()
-        
-        if base_model is None:
-            base_model = BasicCnnEmbedding()
-        try:
-            base_name = base_model.get_identifier()
-        except:
-            base_name = 'model'
-        
-        if feature_extractor is None:
-            feature_extractor = InceptionResnetV1(pretrained='vggface2')
-        for param in feature_extractor.parameters():
-            param.requires_grad = fine_tune
-            
-        for param in base_model.parameters():
-            param.requires_grad = True
-            
-        self.base_model = base_model
-        self.feature_extractor = feature_extractor
+        super(DualHistogramModel,self).__init__(**kwargs)
         
         self.histogram_dropout = torch.nn.Dropout(p=histogram_dropout)    
         histogram_layers = []
@@ -450,54 +422,24 @@ class DualHistogramModel(BaseModel):
             histogram_layers.append(torch.nn.ReLU())
         self.histogram_layers = torch.nn.ModuleList(histogram_layers)
         
-        curr_dim = base_model.logits.in_features + feature_extractor.logits.in_features + histogram_dims[-1]
-        hidden_layers = []
-        for i,size in enumerate(hidden_dims):
-            layer = torch.nn.Linear(curr_dim, size)
-            curr_dim = size
-            hidden_layers.append(layer)
-            hidden_layers.append(torch.nn.ReLU())
-            
-        self.hidden_layers = torch.nn.ModuleList(hidden_layers)
-        self.embedding_dropout = torch.nn.Dropout(p=embedding_dropout)
+        curr_dim = self.base_model.logits.in_features + self.feature_extractor.logits.in_features + histogram_dims[-1]
         
-        self.st_layers = self.make_output(curr_dim,st_dims,10,st_dropout)
-        self.age_layers = self.make_output(curr_dim,age_dims,4,age_dropout)
-        self.gender_layers = self.make_output(curr_dim,gender_dims,2,gender_dropout)
-        
-        name_string = 'dualhist_' + base_name 
-        if fine_tune:
-            name_string += '_finetune'
-        
-        def add_dims(n,dims,prefix):
-            for dim in dims:
-                n += '_'+prefix+str(dim)
-            return n
-        
-        name_string = add_dims(name_string,histogram_dims,'hist',)
-        name_string = add_dims(name_string,hidden_dims,'h')
-        name_string = add_dims(name_string,st_dims,'st')
-        
-        name_string = add_dims(name_string,age_dims,'a')
-        name_string = add_dims(name_string,gender_dims,'g')
-                    
-        name_string += '_ed' + str(embedding_dropout).replace('0.','')
-        name_string += '_std' + str(st_dropout).replace('0.','')
-        name_string += '_ad' + str(age_dropout).replace('0.','')
-        name_string += '_gd' + str(gender_dropout).replace('0.','')
-                               
-        self.name_string = name_string
+        self.adaptor = torch.nn.Linear(curr_dim, curr_dim - histogram_dims[-1])
+        self.name_string += '_hist' + '-'.join([str(d) for d in histogram_dims])
+        self.name_string += '_histd_' + str(histogram_dropout)
                             
     
     def forward(self,x):
         [xx,xh] = x
-        xh = self.histogram_dropout(xh)
         xh = self.apply_layers(xh,self.histogram_layers)
+        xh = self.histogram_dropout(xh)
         
         xm = self.base_model(xx)
         xf = self.feature_extractor(xx)
         
-        x = torch.cat((xm,xf,xh),axis=-1)
+        x = torch.cat((xm,xf),axis=-1)
+        x = torch.cat((x,xh),axis=-1)
+        x = self.adaptor(x)
         x = self.embedding_dropout(x)
         
         for layer in self.hidden_layers:
@@ -507,6 +449,115 @@ class DualHistogramModel(BaseModel):
         x_age = self.apply_layers(x,self.age_layers)
         x_gender = self.apply_layers(x,self.gender_layers)
         return [x_st,x_age,x_gender]
+                
+# class DualHistogramModel(BaseModel):
+    
+#     def __init__(self,
+#                  base_model = None,
+#                  feature_extractor = None,
+#                  hidden_dims = [400],
+#                  st_dims = [600],
+#                  age_dims = [400],
+#                  gender_dims = [400],
+#                  histogram_dims = [400],
+#                  histogram_dropout = .1,
+#                  embedding_dropout=.3,
+#                  st_dropout = .2,
+#                  age_dropout = .2,
+#                  gender_dropout = .2,
+#                  base_name='model',
+#                  fine_tune=False,
+#                     ):
+#         super(DualHistogramModel,self).__init__()
+        
+#         if base_model is None:
+#             base_model = InceptionResnetV1(pretrained='vggface2')
+#             base_name = 'dualfacenet'
+#         else:
+#             try:
+#                 base_name = base_model.get_identifier()
+#             except:
+#                 base_name = 'model'
+        
+#         if feature_extractor is None:
+#             feature_extractor = InceptionResnetV1(pretrained='vggface2')
+#         for param in feature_extractor.parameters():
+#             param.requires_grad = fine_tune
+            
+#         for param in base_model.parameters():
+#             param.requires_grad = True
+            
+#         self.base_model = base_model
+#         self.feature_extractor = feature_extractor
+        
+#         self.histogram_dropout = torch.nn.Dropout(p=histogram_dropout)    
+#         histogram_layers = []
+#         hist_curr_dim = 300
+#         for i,size in enumerate(histogram_dims):
+#             layer = torch.nn.Linear(hist_curr_dim, size)
+#             hist_curr_dim = size
+#             histogram_layers.append(layer)
+#             histogram_layers.append(torch.nn.ReLU())
+#         self.histogram_layers = torch.nn.ModuleList(histogram_layers)
+        
+#         curr_dim = base_model.logits.in_features + feature_extractor.logits.in_features + histogram_dims[-1]
+#         hidden_layers = []
+#         for i,size in enumerate(hidden_dims):
+#             layer = torch.nn.Linear(curr_dim, size)
+#             curr_dim = size
+#             hidden_layers.append(layer)
+#             hidden_layers.append(torch.nn.ReLU())
+            
+#         self.hidden_layers = torch.nn.ModuleList(hidden_layers)
+#         self.embedding_dropout = torch.nn.Dropout(p=embedding_dropout)
+        
+#         self.st_layers = self.make_output(curr_dim,st_dims,10,st_dropout)
+#         self.age_layers = self.make_output(curr_dim,age_dims,4,age_dropout)
+#         self.gender_layers = self.make_output(curr_dim,gender_dims,2,gender_dropout)
+        
+#         name_string = 'dualhist_' + base_name 
+#         if fine_tune:
+#             name_string += '_finetune'
+        
+#         def add_dims(n,dims,prefix):
+#             for dim in dims:
+#                 n += '_'+prefix+str(dim)
+#             return n
+        
+#         name_string = add_dims(name_string,histogram_dims,'hist',)
+#         name_string = add_dims(name_string,hidden_dims,'h')
+#         name_string = add_dims(name_string,st_dims,'st')
+        
+#         name_string = add_dims(name_string,age_dims,'a')
+#         name_string = add_dims(name_string,gender_dims,'g')
+                    
+#         name_string += '_ed' + str(embedding_dropout).replace('0.','')
+#         name_string += '_std' + str(st_dropout).replace('0.','')
+#         name_string += '_ad' + str(age_dropout).replace('0.','')
+#         name_string += '_gd' + str(gender_dropout).replace('0.','')
+                               
+#         self.name_string = name_string
+                            
+    
+#     def forward(self,x):
+#         [xx,xh] = x
+#         xh = self.histogram_dropout(xh)
+#         xh = self.apply_layers(xh,self.histogram_layers)
+        
+#         xm = self.base_model(xx)
+#         xf = self.feature_extractor(xx)
+        
+#         x = torch.cat((xm,xf),axis=-1)
+#         x = torch.cat((x,xh),axis=-1)
+#         x = self.embedding_dropout(x)
+        
+#         for layer in self.hidden_layers:
+#             x = layer(x)
+        
+#         x_st = self.apply_layers(x,self.st_layers)
+#         x_age = self.apply_layers(x,self.age_layers)
+#         x_gender = self.apply_layers(x,self.gender_layers)
+#         return [x_st,x_age,x_gender]
     
 def apply_along_axis(function, x, axis: int = 0):
     return torch.stack([
@@ -516,11 +567,19 @@ def apply_along_axis(function, x, axis: int = 0):
 def torch_histogram(image,channels=3):
     histograms = []
     for channel in range(channels):
-        hist = torch.histc(image[channel])
+        i = image[channel]
+        i = i/torch.linalg.norm(i,ord=2)
+        hist = torch.histc(i)
         histograms.append(hist)
     return torch.cat(histograms,-1)
+
+def l2_normalize(x, axis=-1, epsilon=1e-10):
+    output = x / np.sqrt(np.maximum(np.sum(np.square(x), axis=axis, keepdims=True), epsilon))
+    return output
 
 def torch_color_histogram(images):
     if images.ndim <= 3:
         return torch_histogram(images)
-    return apply_along_axis(torch_histogram,images,0)
+    hist = apply_along_axis(torch_histogram,images,0)
+    
+    return hist
