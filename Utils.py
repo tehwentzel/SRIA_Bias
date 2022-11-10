@@ -7,7 +7,7 @@ class Constants():
     
     data_root = '../../data/'
     model_folder = data_root + 'models/'
-    result_folder = data_root + 'resuls/'
+    result_folder = data_root + 'results/'
     labels = ['skin_tone','age','gender']
     n_classes = {
         'skin_tone': 10,
@@ -27,10 +27,11 @@ class ConfusionMatrixDisplay:
         self,
         *,
         include_values=True,
-        cmap="viridis",
+        cmap="Blues",
         xticks_rotation="horizontal",
         values_format=None,
         ax=None,
+        cm_unnormalized=None,
         colorbar=True,
         title=None,
         im_kw=None,
@@ -43,6 +44,17 @@ class ConfusionMatrixDisplay:
             fig = ax.figure
 
         cm = self.confusion_matrix
+        if cm_unnormalized is None:
+            cm_unnormalized = cm
+            
+#         maxval = cm.max()
+#         cm_rgb = np.stack([maxval*np.ones(cm.shape),maxval*np.ones(cm.shape),maxval - cm],axis=2)
+#         print(cm_rgb.shape)
+#         for i in range(cm.shape[0]):
+#             cm_rgb[i,i,0] = maxval -cm[i,i]
+#             cm_rgb[i,i,1] = maxval - cm[i,i]
+#             cm_rgb[i,i,2] = maxval
+        
         n_classes = cm.shape[0]
 
         default_im_kw = dict(interpolation="nearest", cmap=cmap)
@@ -50,9 +62,11 @@ class ConfusionMatrixDisplay:
         im_kw = {**default_im_kw, **im_kw}
 
         self.im_ = ax.imshow(cm, **im_kw)
+#         self.im_ = ax.imshow(cm_rgb, **im_kw)
         self.text_ = None
         cmap_min, cmap_max = self.im_.cmap(0), self.im_.cmap(1.0)
 
+        
         if include_values:
             self.text_ = np.empty_like(cm, dtype=object)
 
@@ -63,13 +77,13 @@ class ConfusionMatrixDisplay:
                 color = cmap_max if cm[i, j] < thresh else cmap_min
 
                 if values_format is None:
-                    text_cm = format(cm[i, j], ".2g")
+                    text_cm = format(cm_unnormalized[i, j], ".2g")
                     if cm.dtype.kind != "f":
-                        text_d = format(cm[i, j], "d")
+                        text_d = format(cm_unnormalized[i, j], "d")
                         if len(text_d) < len(text_cm):
                             text_cm = text_d
                 else:
-                    text_cm = format(cm[i, j], values_format)
+                    text_cm = format(cm_unnormalized[i, j], values_format)
 
                 self.text_[i, j] = ax.text(
                     j, i, text_cm, ha="center", va="center", color=color
@@ -134,6 +148,13 @@ class ConfusionMatrixDisplay:
             labels=labels,
             normalize=normalize,
         )
+        
+        cm_unnormalized = confusion_matrix(
+            y_true,
+            y_pred,
+            sample_weight=sample_weight,
+            labels=labels,
+        )
 
         disp = cls(confusion_matrix=cm, display_labels=display_labels)
 
@@ -141,6 +162,7 @@ class ConfusionMatrixDisplay:
             include_values=include_values,
             cmap=cmap,
             ax=ax,
+            cm_unnormalized=cm_unnormalized,
             xticks_rotation=xticks_rotation,
             values_format=values_format,
             colorbar=colorbar,
