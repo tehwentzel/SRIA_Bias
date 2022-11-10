@@ -170,6 +170,8 @@ class ConfusionMatrixDisplay:
             im_kw=im_kw,
         )
     
+
+    
 def prewhiten(x):
     if x.ndim == 4:
         axis = (1, 2, 3)
