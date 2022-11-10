@@ -251,3 +251,55 @@ def FaceGenerator(labels,data_root,batch_size=100, **kwargs):
     dataset = FaceGeneratorIterator(labels,data_root,**kwargs)
     print(dataset.df.shape)
     return torch.utils.data.DataLoader(dataset,batch_size=batch_size,shuffle=dataset.shuffle_on_epoch)
+
+
+class TripletFaceGeneratorIterator(FaceGeneratorIterator):
+    
+    #alternative generator that returns [image,anchor,bias, [skintone, age, gender]]
+    #where anchor is high-confidance in same class, bias is a counterfactual
+    #assumes I've preprocessed the  input dataframe to have anchor and bias weights for each subgroup in order skintone-age-gender
+    #i havent tested if preloading works since i dont use it
+    
+    def __init__(self,df,root,**kwargs):
+        super(TripletFaceGeneratorIterator,self).__init__(df,root,**kwargs)
+        
+        def get_subgroup(row):
+            return str(row['skin_tone']) + '-' + str(row['age']) + '-' + str(row['gender'])
+        self.df['subgroup'] = self.df.apply(get_subgroup,axis=1)
+
+
+    def process_single_image(self,subdf,augment_images=None,**kwargs):
+        imagename= subdf['name']
+        if self.preloaded:
+            image = subdf['image']
+        else:
+            image = self.process_image_file(imagename)
+        augment_images = self.augment_images if augment_images is None else augment_images
+        if augment_images:
+            image = self.augmentor.augment_image(image,**kwargs)
+        else:
+            image = self.augmentor.format_image(image,**kwargs)
+        #swaps axis to be batch x chanells x widht x height
+        image = imgs_to_torch(image,convert=True)
+        return image
+    
+    def process_files(self,subdf,**kwargs):
+        #will return a list of arrays [images, label1, label2, label3, etc]
+        baseimage = self.process_single_image(subdf)
+        
+        subgroup = subdf['subgroup']
+        anchor = self.df.sample(n=1,weights=subgroup+'_anchor').iloc[0]
+#         assert(subgroup == anchor['subgroup'])
+        bias = self.df.sample(n=1,weights=subgroup+'_bias').iloc[0]
+#         assert(subgroup != bias['subgroup'])
+        anchorimage = self.process_single_image(anchor)
+        biasimage = self.process_single_image(bias)
+        
+        labels = [subdf[label] for label in self.labels]
+        output = [[baseimage,anchorimage,biasimage], labels]
+        return output
+
+def TripletFaceGenerator(labels,data_root,batch_size=100, **kwargs):
+    #Is this legal?
+    dataset = TripletFaceGeneratorIterator(labels,data_root,**kwargs)
+    return torch.utils.data.DataLoader(dataset,batch_size=batch_size,shuffle=dataset.shuffle_on_epoch)
