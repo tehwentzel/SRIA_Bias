@@ -157,52 +157,33 @@ class Augmentor():
             images = resnet_preprocess(images)
         images = cv2.resize(images,[self.image_size, self.image_size])
         return images
-        
-class FaceGeneratorIterator(torch.utils.data.Dataset):
     
-    def __init__(self,df,root,
-                 filter_nonfaces=True,
-                 batch_size=1,
-                 image_shape=None,
-                 labels=None,
-                 regularize_labels=False,
-                 upsample=True,
-                 fit_df=None,
-                 shuffle_on_init=True,
-                 validation = False,
-                 preload=False,
-                 **kwargs):
-        super(FaceGeneratorIterator,self).__init__()
+class GeneratorBase(torch.utils.data.Dataset):
+    
+    def __init__(self,df,root,fit_df=None,filter_nonfaces=True,shuffle_on_init=True,image_shape=None,validation=False,**kwargs):
+        super(GeneratorBase,self).__init__()
         df = df.copy()
         if fit_df is None:
             fit_df = df.copy()
         if filter_nonfaces:
             df = df[df.is_face]
             fit_df = fit_df[fit_df.is_face]
-        if upsample:
-            df = upsample_data(df,fit_df=fit_df)
+#         if upsample:
+#             df = upsample_data(df,fit_df=fit_df)
         if shuffle_on_init:
             df = df.sample(frac=1)
+        self.fit_df = fit_df
         self.df = df
         
         self.image_shape = image_shape if image_shape is not None else Constants.resnet_size
         self.batch_size = 1
         self.root=root
-        
-        self.labels = labels if (labels is not None) else Constants.labels
-        
-        self.n_classes = {label: len(self.df[label].unique()) for label in self.labels}
-        self.augmentor = Augmentor(**kwargs)
-        if regularize_labels:
-            self.df[self.labels] = self.df[self.labels].values/self.df[self.labels].max().values
-        
-        
+        self.validation=validation
         self.shuffle_on_epoch = not validation
         self.augment_images = not validation
         
-        if preload:
-            self.df['image'] = self.df.name.apply(self.process_image_file)
-        self.preloaded = preload
+        
+        self.augmentor = Augmentor(**kwargs)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
     def __len__(self):
@@ -226,6 +207,29 @@ class FaceGeneratorIterator(torch.utils.data.Dataset):
         image = read_image(i)
         return image
     
+class FaceGeneratorIterator(GeneratorBase):
+    
+    def __init__(self,df,root,
+                 image_shape=None,
+                 labels=None,
+                 regularize_labels=False,
+                 upsample=True,
+                 preload=False,
+                 **kwargs):
+        super(FaceGeneratorIterator,self).__init__(df,root,**kwargs)
+        if upsample:
+            self.df = upsample_data(self.df,fit_df=self.fit_df)
+
+        self.labels = labels if (labels is not None) else Constants.labels
+        
+        self.n_classes = {label: len(self.df[label].unique()) for label in self.labels}
+        if regularize_labels:
+            self.df[self.labels] = self.df[self.labels].values/self.df[self.labels].max().values
+        
+        if preload:
+            self.df['image'] = self.df.name.apply(self.process_image_file)
+        self.preloaded = preload
+        
     def get_dataset(self):
         return self.process_files(self.df['name'])
     
@@ -266,8 +270,7 @@ class TripletFaceGeneratorIterator(FaceGeneratorIterator):
         def get_subgroup(row):
             return str(row['skin_tone']) + '-' + str(row['age']) + '-' + str(row['gender'])
         self.df['subgroup'] = self.df.apply(get_subgroup,axis=1)
-
-
+        
     def process_single_image(self,subdf,augment_images=None,**kwargs):
         imagename= subdf['name']
         if self.preloaded:
@@ -302,4 +305,49 @@ class TripletFaceGeneratorIterator(FaceGeneratorIterator):
 def TripletFaceGenerator(labels,data_root,batch_size=100, **kwargs):
     #Is this legal?
     dataset = TripletFaceGeneratorIterator(labels,data_root,**kwargs)
+    return torch.utils.data.DataLoader(dataset,batch_size=batch_size,shuffle=dataset.shuffle_on_epoch)
+
+class UnsupervisedTripletGeneratorIterator(FaceGeneratorIterator):
+    
+    #alternative generator that returns [image,anchor,bias, [skintone, age, gender]]
+    #where anchor is high-confidance in same class, bias is a counterfactual
+    #assumes I've preprocessed the  input dataframe to have anchor and bias weights for each subgroup in order skintone-age-gender
+    #i havent tested if preloading works since i dont use it
+    
+    def __init__(self,df,
+                 root,
+                 upsample=True,
+                 **kwargs):
+        if isinstance(df,list):
+            df = pd.concat(df,axis=0,ignore_index=True)
+        super(UnsupervisedTripletGeneratorIterator,self).__init__(df,root,augment_prob=1,**kwargs)
+    
+    def process_single_image(self,subdf,**kwargs):
+        imagename= subdf['name']
+        image = self.process_image_file(imagename)
+        image = self.augmentor.augment_image(image,**kwargs)
+        #swaps axis to be batch x chanells x widht x height
+        return image
+    
+    def process_files(self,subdf,**kwargs):
+        #will return a list of arrays [image,image,otherimage]
+        #image instances should have different augmentation
+        baseimage = self.process_single_image(subdf)
+        
+        bias = self.df.sample(n=1).iloc[0]
+        while bias['name'] == subdf['name']:
+            bias = self.df.sample(n=1).iloc[0]
+        anchorimage = self.process_single_image(subdf)
+        biasimage = self.process_single_image(bias)
+        
+        images = [baseimage,anchorimage,biasimage]
+        images = [imgs_to_torch(i,convert=True) for i in images]
+        
+        labels = [subdf[label] for label in self.labels]
+        output = [images,labels]
+        return output
+    
+def UnsupervisedTripletGenerator(labels,data_root,batch_size=100, **kwargs):
+    #Is this legal?
+    dataset = UnsupervisedTripletGeneratorIterator(labels,data_root,**kwargs)
     return torch.utils.data.DataLoader(dataset,batch_size=batch_size,shuffle=dataset.shuffle_on_epoch)
