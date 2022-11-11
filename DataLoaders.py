@@ -315,9 +315,7 @@ class UnsupervisedTripletGeneratorIterator(FaceGeneratorIterator):
     #i havent tested if preloading works since i dont use it
     
     def __init__(self,df,
-                 root,
-                 upsample=True,
-                 **kwargs):
+                 root,**kwargs):
         if isinstance(df,list):
             df = pd.concat(df,axis=0,ignore_index=True)
         super(UnsupervisedTripletGeneratorIterator,self).__init__(df,root,augment_prob=1,**kwargs)
@@ -325,7 +323,10 @@ class UnsupervisedTripletGeneratorIterator(FaceGeneratorIterator):
     def process_single_image(self,subdf,**kwargs):
         imagename= subdf['name']
         image = self.process_image_file(imagename)
-        image = self.augmentor.augment_image(image,**kwargs)
+        if self.validation:
+            images = self.augmentor.format_image(image,**kwargs)
+        else:
+            image = self.augmentor.augment_image(image,**kwargs)
         #swaps axis to be batch x chanells x widht x height
         return image
     
@@ -333,6 +334,9 @@ class UnsupervisedTripletGeneratorIterator(FaceGeneratorIterator):
         #will return a list of arrays [image,image,otherimage]
         #image instances should have different augmentation
         baseimage = self.process_single_image(subdf)
+        labels = [subdf[label] for label in self.labels]
+        if self.validation:
+            return imgs_to_torch(baseimage,convert=True), labels
         
         bias = self.df.sample(n=1).iloc[0]
         while bias['name'] == subdf['name']:
@@ -343,7 +347,6 @@ class UnsupervisedTripletGeneratorIterator(FaceGeneratorIterator):
         images = [baseimage,anchorimage,biasimage]
         images = [imgs_to_torch(i,convert=True) for i in images]
         
-        labels = [subdf[label] for label in self.labels]
         output = [images,labels]
         return output
     
