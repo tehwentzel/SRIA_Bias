@@ -33,15 +33,20 @@ def calc_label_upsample(df,**kwargs):
     ratios = {k: 1/(v/max_group) for k,v in counts.items()} 
     return ratios
 
-def upsample_data(df,fit_df=None,**kwargs):
+def get_upsample_weights(df,fit_df=None,**kwargs):
     if fit_df is None:
         fit_df = df.copy()
         
     fit_df = add_group(fit_df,**kwargs)
-    df = add_group(df,**kwargs)
+    df = add_group(df.copy(),**kwargs)
 
     ratios = calc_label_upsample(fit_df)
     df['group_ratio'] = df.group.apply(lambda x: ratios.get(x,1))
+    return df
+#     new_df = []
+
+def upsample_data(df,fit_df=None,**kwargs):
+    df = get_upsample_weights(df,fit_df=fit_df)
     new_df = []
     for i,row in df.iterrows():
         repeats = np.ceil(row.group_ratio).astype(int)
@@ -71,9 +76,20 @@ def imgs_to_torch(array,convert=False):
         array = torch.from_numpy(array)
     return array
 
+def array_softmax(x,axis=0):
+    """Compute softmax values for each sets of scores in x."""
+    return np.exp(x) / np.sum(np.exp(x), axis=axis)
+
+def get_random_upsampler(df,fit_df=None,drop_last=True,replacement=True,softmax=False,**kwargs):
+    df = get_upsample_weights(df,fit_df=fit_df)
+    if softmax:
+        df['group_ratio'] = df.group_ratio.apply(array_softmax)
+    sampler = torch.utils.data.WeightedRandomSampler(df.group_ratio.values,df.shape[0],replacement=replacement)
+    return sampler
+
 class Augmentor():
     
-    def __init__(self,image_size = None,noise_sigma=.03,augment_prob = .8):
+    def __init__(self,image_size = None,noise_sigma=.03,augment_prob = .8,**kwargs):
         if image_size is None:
             image_size = Constants.resnet_size
         self.image_size = image_size
@@ -189,7 +205,7 @@ class GeneratorBase(torch.utils.data.Dataset):
     def __len__(self):
         return self.df.shape[0]
             
-        
+    
     def __getitem__(self,idx):
         subdf = self.df.iloc[idx]
         return self.process_files(subdf)
@@ -250,12 +266,23 @@ class FaceGeneratorIterator(GeneratorBase):
         output = [image, labels]
         return output
 
-def FaceGenerator(labels,data_root,batch_size=100, **kwargs):
-    #Is this legal?
-    dataset = FaceGeneratorIterator(labels,data_root,**kwargs)
+def FaceGenerator(labels,data_root,
+                  batch_size=100,
+                  workers=2,
+                  random_upsample=False,
+                  fit_df=None,softmax=False, 
+                  upsample=False,
+                  **kwargs):
+    if random_upsample:
+        upsampler = get_random_upsampler(labels,fit_df=fit_df,softmax=softmax)
+        upsample = False
+        shuffle=False
+    else:
+        upsampler=None
+        shuffle=dataset.shuffle_on_epoch
+    dataset = FaceGeneratorIterator(labels,data_root,fit_df=fit_df,upsample=upsample,**kwargs)
     print(dataset.df.shape)
-    return torch.utils.data.DataLoader(dataset,batch_size=batch_size,shuffle=dataset.shuffle_on_epoch)
-
+    return torch.utils.data.DataLoader(dataset,batch_size=batch_size,shuffle=dataset.shuffle_on_epoch,num_workers=workers)
 
 class TripletFaceGeneratorIterator(FaceGeneratorIterator):
     
@@ -264,9 +291,14 @@ class TripletFaceGeneratorIterator(FaceGeneratorIterator):
     #assumes I've preprocessed the  input dataframe to have anchor and bias weights for each subgroup in order skintone-age-gender
     #i havent tested if preloading works since i dont use it
     
-    def __init__(self,df,root,**kwargs):
+    def __init__(self,df,root,nonface_bias_prob=.01,**kwargs):
         super(TripletFaceGeneratorIterator,self).__init__(df,root,**kwargs)
-        
+        self.nonface_df = df[~df.is_face]
+        if self.nonface_df.shape[0] < 5 or nonface_bias_prob <= .0001:
+            print('no faces')
+            self.use_nonface = lambda : False
+        else:
+            self.use_nonface = lambda : np.random.random() < nonface_bias_prob
         def get_subgroup(row):
             return str(row['skin_tone']) + '-' + str(row['age']) + '-' + str(row['gender'])
         self.df['subgroup'] = self.df.apply(get_subgroup,axis=1)
@@ -293,7 +325,10 @@ class TripletFaceGeneratorIterator(FaceGeneratorIterator):
         subgroup = subdf['subgroup']
         anchor = self.df.sample(n=1,weights=subgroup+'_anchor').iloc[0]
 #         assert(subgroup == anchor['subgroup'])
-        bias = self.df.sample(n=1,weights=subgroup+'_bias').iloc[0]
+        if self.use_nonface():
+            bias = self.nonface_df.sample(n=1).iloc[0]
+        else:
+            bias = self.df.sample(n=1,weights=subgroup+'_bias').iloc[0]
 #         assert(subgroup != bias['subgroup'])
         anchorimage = self.process_single_image(anchor)
         biasimage = self.process_single_image(bias)
@@ -302,10 +337,23 @@ class TripletFaceGeneratorIterator(FaceGeneratorIterator):
         output = [[baseimage,anchorimage,biasimage], labels]
         return output
 
-def TripletFaceGenerator(labels,data_root,batch_size=100, **kwargs):
-    #Is this legal?
-    dataset = TripletFaceGeneratorIterator(labels,data_root,**kwargs)
-    return torch.utils.data.DataLoader(dataset,batch_size=batch_size,shuffle=dataset.shuffle_on_epoch)
+def TripletFaceGenerator(labels,data_root,
+                         batch_size=100,
+                         workers=2,
+                         random_upsample=False,
+                         fit_df=None, 
+                         softmax=False,
+                         upsample=False,**kwargs):
+    if random_upsample:
+        upsampler = get_random_upsampler(labels,fit_df=fit_df,softmax=softmax)
+        upsample = False
+        shuffle=False
+    else:
+        upsampler=None
+        shuffle=dataset.shuffle_on_epoch
+    dataset = TripletFaceGeneratorIterator(labels,data_root,fit_df=fit_df,upsample=upsample,**kwargs)
+    print(dataset.df.shape)
+    return torch.utils.data.DataLoader(dataset,batch_size=batch_size,shuffle=dataset.shuffle_on_epoch,num_workers=workers)
 
 class UnsupervisedTripletGeneratorIterator(FaceGeneratorIterator):
     
@@ -329,7 +377,7 @@ class UnsupervisedTripletGeneratorIterator(FaceGeneratorIterator):
             image = self.augmentor.augment_image(image,**kwargs)
         #swaps axis to be batch x chanells x widht x height
         return image
-    
+   
     def process_files(self,subdf,**kwargs):
         #will return a list of arrays [image,image,otherimage]
         #image instances should have different augmentation
