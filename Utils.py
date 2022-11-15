@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix
 from itertools import product
+import torch
 
 class Constants():
     
@@ -208,3 +209,39 @@ def plot_selection(images,rows=20,columns=3):
         plt.imshow(image)
         
     return
+
+def categorical_accuracy(ypred,y):
+    #y is index, ypred i s one hot like in loss functions
+    predicted = torch.argmax(ypred,1).long()
+    correct = torch.mean((y.long() == predicted).float())
+    return correct
+
+def torch_subclass_f1(y,ypred,c=1):
+    y = (y == c)
+    ypred = (ypred == c)
+    tp = (y & ypred)
+    fp = (~y & ypred)
+    fn = (y & ~ypred)
+    tn = (~y & ~ypred)
+    recall = tp.sum()/y.sum()
+    if ypred.sum() < 1:
+        precision = tp.sum() - tp.sum()
+    else:
+        precision = tp.sum()/ypred.sum()
+    
+    f1 = torch.nan_to_num(precision*recall/(precision + recall))
+    return f1,precision,recall
+
+def macro_f1(y,ypred):
+    avg_f1 = 0
+    avg_precision = 0
+    avg_recall = 0
+    nclass = len(torch.unique(y))
+    if ypred.ndim > 1:
+        ypred = torch.argmax(ypred,1).long()
+    for c in torch.unique(y):
+        f1,precision,recall = torch_subclass_f1(y,ypred,c=c)
+        avg_f1 += f1/nclass
+        avg_precision += precision/nclass
+        avg_recall += recall/nclass
+    return avg_f1, avg_precision, avg_recall

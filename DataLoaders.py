@@ -279,10 +279,12 @@ def FaceGenerator(labels,data_root,
         shuffle=False
     else:
         upsampler=None
-        shuffle=dataset.shuffle_on_epoch
+        
     dataset = FaceGeneratorIterator(labels,data_root,fit_df=fit_df,upsample=upsample,**kwargs)
+    if not random_upsample:
+        shuffle = dataset.shuffle_on_epoch
     print(dataset.df.shape)
-    return torch.utils.data.DataLoader(dataset,batch_size=batch_size,shuffle=dataset.shuffle_on_epoch,num_workers=workers)
+    return torch.utils.data.DataLoader(dataset,batch_size=batch_size,shuffle=shuffle,num_workers=workers)
 
 class TripletFaceGeneratorIterator(FaceGeneratorIterator):
     
@@ -350,10 +352,11 @@ def TripletFaceGenerator(labels,data_root,
         shuffle=False
     else:
         upsampler=None
-        shuffle=dataset.shuffle_on_epoch
     dataset = TripletFaceGeneratorIterator(labels,data_root,fit_df=fit_df,upsample=upsample,**kwargs)
+    if not random_upsample:
+        shuffle=dataset.shuffle_on_epoch
     print(dataset.df.shape)
-    return torch.utils.data.DataLoader(dataset,batch_size=batch_size,shuffle=dataset.shuffle_on_epoch,num_workers=workers)
+    return torch.utils.data.DataLoader(dataset,batch_size=batch_size,shuffle=shuffle,num_workers=workers)
 
 class UnsupervisedTripletGeneratorIterator(FaceGeneratorIterator):
     
