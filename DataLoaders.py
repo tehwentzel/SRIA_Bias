@@ -112,7 +112,13 @@ class Augmentor():
     def random_rotation(self,img, bg_patch=(5,5)):
         assert len(img.shape) <= 3, "Incorrect image shape"
         key = np.random.random()
-        if key > .66:
+        #30% change of flipping along each axis before rotating
+        elif key < .33:
+            img = np.flip(img,1)
+        elif key > .66:
+            img = np.flip(img,2)
+        #90% change of rotating
+        if key < .9:
             angle = (self.random_range(.01,.99)*360 - 180)
             rgb = len(img.shape) == 3
             if rgb:
@@ -122,10 +128,6 @@ class Augmentor():
             key = np.random.random
             mask = [img <= 0, np.any(img <= 0, axis=-1)][rgb]
             img[mask] = bg_color
-        elif key > .33:
-            img = np.flip(img,1)
-        else:
-            img = np.flip(img,2)
         return img
     
     def gaussian_noise(self,img, mean=0):
