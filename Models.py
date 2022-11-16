@@ -7,6 +7,28 @@ from Utils import Constants
 import cv2
 from facenet_pytorch import InceptionResnetV1
 import torchvision
+import torchvision.models as tm
+
+def InceptionResnet(pretrained=None,**kwargs):
+    m = InceptionResnetV1(pretrained=pretrained)
+    return m
+
+def ResNet18(pretrained=True,**kwargs):
+    model = tm.resnet18(pretrained=pretrained,**kwargs)
+    model.logits = torch.nn.Linear(model.fc.out_features,model.fc.out_features)
+    return model
+
+def MobileNet():
+    model = tm.mobilenet_v2(pretrained=True)
+    dim = model.classifier[1].out_features
+    model.logits = torch.nn.Linear(dim,dim)
+    return model
+
+def DenseNet():
+    model = tm.densenet161(pretrained=True)
+    dim = model.classifier.out_features
+    model.logits = torch.nn.Linear(dim,dim)
+    return model
 
 class ConvBlock(torch.nn.Module):
     def __init__(self, in_channels, out_channels,kernel_size):
@@ -468,9 +490,6 @@ class TripletFacenetEncoder(BaseModel):
         if base_model is None:
             base_model = InceptionResnetV1(pretrained='vggface2')
             base_name = 'dualfacenet'
-        else:
-            base_name = base_model.get_identifier()
-        
         
         if feature_extractor is None:
             feature_extractor = InceptionResnetV1(pretrained='vggface2')
@@ -505,7 +524,7 @@ class TripletFacenetEncoder(BaseModel):
         name_string = 'dualencoder_' + base_name
         name_string = add_dims(name_string,hidden_dims,'h')
         name_string += '_ed' + str(embedding_dropout).replace('0.','')
-        
+        self.name_string=name_string
         
     def forward(self,x):
         xb = self.base_model(x)
@@ -581,6 +600,154 @@ class TripletModel(BaseModel):
         x = self.decoder(x)
         return x
     
+class TripletHistogramEncoder(BaseModel):
+    #model to use as a triplet loss
+    #will tak in list of three image batchs
+    #returns list of tree embeedidng batchs + predictions on first batch of images
+    def __init__(self,
+                 base_model = None,
+                 feature_extractor = None,
+                 hidden_dims = [600],
+                 hist_dim=100,
+                 embedding_dropout=.5,
+                 base_name='histmodel',
+                 fine_tune=False,
+                 **kwargs):
+        super(TripletHistogramEncoder,self).__init__()
+                               
+        if base_model is None:
+            base_model = InceptionResnetV1(pretrained='vggface2')
+            base_name = 'dualfacenet'
+        else:
+            base_name = base_model.get_identifier()
+        
+        
+        if feature_extractor is None:
+            feature_extractor = InceptionResnetV1(pretrained='vggface2')
+        for param in feature_extractor.parameters():
+            param.requires_grad = fine_tune
+        for param in base_model.parameters():
+            param.requires_grad = True
+            
+        self.base_model = base_model
+        self.feature_extractor = feature_extractor
+        
+        self.hist_layer =torch.nn.Linear(300,hist_dim)
+        
+        self.embedding_dropout = torch.nn.Dropout(p=embedding_dropout)
+        curr_dim = base_model.logits.in_features + feature_extractor.logits.in_features + hist_dim
+        hidden_layers = []
+        
+        for i,size in enumerate(hidden_dims):
+            layer = torch.nn.Linear(curr_dim, size)
+            curr_dim = size
+            hidden_layers.append(layer)
+            hidden_layers.append(torch.nn.ReLU())
+            
+        self.hidden_layers = torch.nn.ModuleList(hidden_layers)
+        
+        self.embedding_size = hidden_dims[-1]
+        self.norm = torch.nn.BatchNorm1d(self.embedding_size)
+        
+        def add_dims(n,dims,prefix):
+            for dim in dims:
+                n += '_'+prefix+str(dim)
+            return n
+        
+        name_string = 'dualencoder_' + base_name
+        name_string = add_dims(name_string,hidden_dims,'h')
+        name_string += '_ed' + str(embedding_dropout).replace('0.','')
+        self.name_string=name_string
+        
+    def forward(self,x):
+        with torch.no_grad():
+            x.requires_grad_(False)
+            x, xh = add_batch_histogram(torch.clone(x),device = x.get_device())
+        x.requires_grad_(True)
+        xh.requires_grad_(False)
+                                        
+        xb = self.base_model(x)
+        xf = self.feature_extractor(x)
+        xh = self.hist_layer(xh)
+
+        x = torch.cat((xb,xf,xh),axis=-1)
+        x = self.embedding_dropout(x)
+        for layer in self.hidden_layers:
+            x = layer(x)
+        x = self.norm(x)
+        return x
+    
+class TripletHistogramSimpleEncoder(BaseModel):
+    #model to use as a triplet loss
+    #will tak in list of three image batchs
+    #returns list of tree embeedidng batchs + predictions on first batch of images
+    def __init__(self,
+                 base_model = None,
+                 feature_extractor = None,
+                 hidden_dims = [500],
+                 hist_dim=20,
+                 embedding_dropout=.4,
+                 base_name='histmodel',
+                 fine_tune=False,
+                 **kwargs):
+        super(TripletHistogramSimpleEncoder,self).__init__()
+                               
+        if base_model is None:
+            base_model = InceptionResnetV1(pretrained='vggface2')
+            base_name = 'dualfacenet'
+        else:
+            base_name = base_model.get_identifier()
+        
+        for param in base_model.parameters():
+            param.requires_grad = True
+            
+        self.base_model = base_model
+        
+        self.hist_layer =torch.nn.Linear(300,hist_dim)
+        
+        self.embedding_dropout = torch.nn.Dropout(p=embedding_dropout)
+        curr_dim = base_model.logits.in_features + hist_dim
+        hidden_layers = []
+        
+        for i,size in enumerate(hidden_dims):
+            layer = torch.nn.Linear(curr_dim, size)
+            curr_dim = size
+            hidden_layers.append(layer)
+            hidden_layers.append(torch.nn.ReLU())
+            
+        self.hidden_layers = torch.nn.ModuleList(hidden_layers)
+        
+        self.embedding_size = hidden_dims[-1]
+        self.norm = torch.nn.BatchNorm1d(self.embedding_size)
+        
+        def add_dims(n,dims,prefix):
+            for dim in dims:
+                n += '_'+prefix+str(dim)
+            return n
+        
+        name_string = 'simplehistencoder_' + base_name
+        name_string = add_dims(name_string,hidden_dims,'h')
+        name_string += '_ed' + str(embedding_dropout).replace('0.','')
+        self.name_string=name_string
+        
+    def forward(self,x):
+        with torch.no_grad():
+            x.requires_grad_(False)
+            x, xh = add_batch_histogram(torch.clone(x),device = x.get_device())
+        x.requires_grad_(True)
+        xh.requires_grad_(False)
+                                        
+        xb = self.base_model(x)
+        xh = self.hist_layer(xh)
+
+        x = torch.cat((xb,xh),axis=-1)
+        x = self.embedding_dropout(x)
+        for layer in self.hidden_layers:
+            x = layer(x)
+        x = self.norm(x)
+        return x
+    
+
     
 def add_batch_histogram(xbatch,device=None,grad=None):
     xh = torch_color_histogram(torch.clone(xbatch))

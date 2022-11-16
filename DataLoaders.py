@@ -89,7 +89,7 @@ def get_random_upsampler(df,fit_df=None,drop_last=True,replacement=True,softmax=
 
 class Augmentor():
     
-    def __init__(self,image_size = None,noise_sigma=.03,augment_prob = .8,**kwargs):
+    def __init__(self,image_size = None,noise_sigma=.05,augment_prob = .8,**kwargs):
         if image_size is None:
             image_size = Constants.resnet_size
         self.image_size = image_size
@@ -111,15 +111,21 @@ class Augmentor():
     
     def random_rotation(self,img, bg_patch=(5,5)):
         assert len(img.shape) <= 3, "Incorrect image shape"
-        angle = (self.random_range(.01,.99)*360 - 180)
-        rgb = len(img.shape) == 3
-        if rgb:
-            bg_color = np.mean(img[:bg_patch[0], :bg_patch[1], :], axis=(0,1))
+        key = np.random.random()
+        if key > .66:
+            angle = (self.random_range(.01,.99)*360 - 180)
+            rgb = len(img.shape) == 3
+            if rgb:
+                bg_color = np.mean(img[:bg_patch[0], :bg_patch[1], :], axis=(0,1))
+            else:
+                bg_color = np.mean(img[:bg_patch[0], :bg_patch[1]])
+            key = np.random.random
+            mask = [img <= 0, np.any(img <= 0, axis=-1)][rgb]
+            img[mask] = bg_color
+        elif key > .33:
+            img = np.flip(img,1)
         else:
-            bg_color = np.mean(img[:bg_patch[0], :bg_patch[1]])
-        img = rotate(img, angle,reshape=False)
-        mask = [img <= 0, np.any(img <= 0, axis=-1)][rgb]
-        img[mask] = bg_color
+            img = np.flip(img,2)
         return img
     
     def gaussian_noise(self,img, mean=0):
