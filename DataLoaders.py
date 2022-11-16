@@ -113,7 +113,7 @@ class Augmentor():
         assert len(img.shape) <= 3, "Incorrect image shape"
         key = np.random.random()
         #30% change of flipping along each axis before rotating
-        elif key < .33:
+        if key < .33:
             img = np.flip(img,1)
         elif key > .66:
             img = np.flip(img,2)
