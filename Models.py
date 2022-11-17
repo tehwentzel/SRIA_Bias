@@ -596,9 +596,9 @@ class TripletClassifierRegressor(BaseModel):
                  age_dropout = .2,
                  gender_dropout = .2,
                  **kwargs):
-        super(TripletFacenetClassifier,self).__init__()
+        super(TripletClassifierRegressor,self).__init__()
                                
-        self.st_layers = self.make_output(input_dim,st_dims,1,st_dropout)
+        self.st_layers = self.make_output(input_dim,st_dims,1,st_dropout,use_softmax=False)
         self.age_layers = self.make_output(input_dim,age_dims,4,age_dropout)
         self.gender_layers = self.make_output(input_dim,gender_dims,2,gender_dropout)
         def add_dims(n,dims,prefix):
@@ -630,6 +630,22 @@ class TripletClassifierRegressor(BaseModel):
         x_gender = self.apply_layers(x,self.gender_layers)
         return [x_st,x_age,x_gender]
     
+    def make_output(self,start_size,sizes,n_classes,dropout,use_softmax=True):
+        layers = []
+        curr_size = start_size
+        for size in sizes:
+            layer = torch.nn.Linear(curr_size,size)#.to(self.device)
+            curr_size = size
+            layers.append(layer)
+            layers.append(torch.nn.ReLU())#.to(self.device))
+        if dropout > 0:
+            layers.append(torch.nn.Dropout(p=dropout))
+        layers.append(torch.nn.Linear(curr_size,n_classes))
+        if use_softmax:
+            softmax = torch.nn.Softmax(dim=-1)
+            layers.append(softmax)
+        return torch.nn.ModuleList(layers)
+    
     
 class TripletModel(BaseModel):
     
@@ -651,7 +667,7 @@ class TripletModel(BaseModel):
 class TripletModel2(BaseModel):
     
     def __init__(self,encoder=None,decoder=None):
-        super(TripletModel,self).__init__()
+        super(TripletModel2,self).__init__()
         if encoder is None:
             encoder = TripletFacenetEncoder()
         if decoder is None:

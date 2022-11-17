@@ -346,6 +346,8 @@ class TripletFaceGeneratorIterator(FaceGeneratorIterator):
         image = make_skintone_patch(skintone,size=self.image_shape)
         if self.augment_images:
             image = self.augmentor.gaussian_noise(image)
+        image = self.augmentor.format_image(image)
+        image = imgs_to_torch(image,convert=True)
         return image
         
     def process_single_image(self,subdf,augment_images=None,**kwargs):
@@ -370,15 +372,16 @@ class TripletFaceGeneratorIterator(FaceGeneratorIterator):
         subgroup = subdf['subgroup']
         if np.random.random() > self.skintone_patch_anchor_prob:
             anchor = self.df.sample(n=1,weights=subgroup+'_anchor').iloc[0]
+            anchorimage = self.process_single_image(anchor)
         else:
-            anchor = self.get_skintone_image(self,subdf['skin_tone'])
+            anchorimage = self.get_skintone_image(subdf['skin_tone'])
 #         assert(subgroup == anchor['subgroup'])
         if self.use_nonface():
             bias = self.nonface_df.sample(n=1).iloc[0]
         else:
             bias = self.df.sample(n=1,weights=subgroup+'_bias').iloc[0]
 #         assert(subgroup != bias['subgroup'])
-        anchorimage = self.process_single_image(anchor)
+        
         biasimage = self.process_single_image(bias)
         
         
