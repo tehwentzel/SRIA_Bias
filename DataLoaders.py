@@ -87,6 +87,34 @@ def get_random_upsampler(df,fit_df=None,drop_last=True,replacement=True,softmax=
     sampler = torch.utils.data.WeightedRandomSampler(df.group_ratio.values,df.shape[0],replacement=replacement)
     return sampler
 
+def make_skintone_patch(level,size=None,rescale=True):
+    if size is None:
+        size = 160
+    if level == 0:
+        rgb = (246, 237, 228)
+    elif level == 1:
+        rgb = (243, 231, 219)
+    elif level == 2:
+        rgb = (247, 234, 208)
+    elif level == 3:
+        rgb = (234, 218, 186)
+    elif level == 4:
+        rgb = (215, 189, 150)
+    elif level == 5:
+        rgb = (160, 126, 86)
+    elif level == 6:
+        rgb = (130, 92,67)
+    elif level == 7:
+        rgb = (96, 65, 52)
+    elif level == 8:
+        rgb = (58,49,42)
+    else:
+        rgb = (41,36,32)
+    img = np.stack([np.full((size,size),val) for val in rgb],axis=2)
+    if rescale:
+        img = img.astype(np.float32)/255
+    return img
+
 class Augmentor():
     
     def __init__(self,image_size = None,noise_sigma=.05,augment_prob = .8,**kwargs):
@@ -301,7 +329,7 @@ class TripletFaceGeneratorIterator(FaceGeneratorIterator):
     #assumes I've preprocessed the  input dataframe to have anchor and bias weights for each subgroup in order skintone-age-gender
     #i havent tested if preloading works since i dont use it
     
-    def __init__(self,df,root,nonface_bias_prob=.01,**kwargs):
+    def __init__(self,df,root,nonface_bias_prob=.01,skintone_patch_anchor_prob=.1,**kwargs):
         super(TripletFaceGeneratorIterator,self).__init__(df,root,**kwargs)
         self.nonface_df = df[~df.is_face]
         if self.nonface_df.shape[0] < 5 or nonface_bias_prob <= .0001:
@@ -312,6 +340,13 @@ class TripletFaceGeneratorIterator(FaceGeneratorIterator):
         def get_subgroup(row):
             return str(row['skin_tone']) + '-' + str(row['age']) + '-' + str(row['gender'])
         self.df['subgroup'] = self.df.apply(get_subgroup,axis=1)
+        self.skintone_patch_anchor_prob = skintone_patch_anchor_prob
+        
+    def get_skintone_image(self,skintone):
+        image = make_skintone_patch(skintone,size=self.image_shape)
+        if self.augment_images:
+            image = self.augmentor.gaussian_noise(image)
+        return image
         
     def process_single_image(self,subdf,augment_images=None,**kwargs):
         imagename= subdf['name']
@@ -331,9 +366,12 @@ class TripletFaceGeneratorIterator(FaceGeneratorIterator):
     def process_files(self,subdf,**kwargs):
         #will return a list of arrays [images, label1, label2, label3, etc]
         baseimage = self.process_single_image(subdf)
-        
+        labels = [subdf[label] for label in self.labels]
         subgroup = subdf['subgroup']
-        anchor = self.df.sample(n=1,weights=subgroup+'_anchor').iloc[0]
+        if np.random.random() > self.skintone_patch_anchor_prob:
+            anchor = self.df.sample(n=1,weights=subgroup+'_anchor').iloc[0]
+        else:
+            anchor = self.get_skintone_image(self,subdf['skin_tone'])
 #         assert(subgroup == anchor['subgroup'])
         if self.use_nonface():
             bias = self.nonface_df.sample(n=1).iloc[0]
@@ -343,7 +381,7 @@ class TripletFaceGeneratorIterator(FaceGeneratorIterator):
         anchorimage = self.process_single_image(anchor)
         biasimage = self.process_single_image(bias)
         
-        labels = [subdf[label] for label in self.labels]
+        
         output = [[baseimage,anchorimage,biasimage], labels]
         return output
 

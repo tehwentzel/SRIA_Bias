@@ -583,6 +583,54 @@ class TripletFacenetClassifier(BaseModel):
         x_gender = self.apply_layers(x,self.gender_layers)
         return [x_st,x_age,x_gender]
     
+class TripletClassifierRegressor(BaseModel):
+    #model to use as a triplet loss
+    #will tak in list of three image batchs
+    #returns list of tree embeedidng batchs + predictions on first batch of images
+    def __init__(self,
+                 input_dim,
+                 st_dims = [400],
+                 age_dims = [400],
+                 gender_dims = [400],
+                 st_dropout = .2,
+                 age_dropout = .2,
+                 gender_dropout = .2,
+                 **kwargs):
+        super(TripletFacenetClassifier,self).__init__()
+                               
+        self.st_layers = self.make_output(input_dim,st_dims,1,st_dropout)
+        self.age_layers = self.make_output(input_dim,age_dims,4,age_dropout)
+        self.gender_layers = self.make_output(input_dim,gender_dims,2,gender_dropout)
+        def add_dims(n,dims,prefix):
+            for dim in dims:
+                n += '_'+prefix+str(dim)
+            return n
+        
+        name_string = 'decodewithrregression_'
+        name_string = add_dims(name_string,st_dims,'st')
+        
+        name_string = add_dims(name_string,age_dims,'a')
+        name_string = add_dims(name_string,gender_dims,'g')
+        name_string += '_std' + str(st_dropout).replace('0.','')
+        name_string += '_ad' + str(age_dropout).replace('0.','')
+        name_string += '_gd' + str(gender_dropout).replace('0.','')
+        self.name_string = name_string
+        
+    def embed(self,x):
+        x = self.base_model(x)
+        x = self.embedding_dropout(x)
+        for layer in self.hidden_layers:
+            x = layer(x)
+        return x
+        
+    def forward(self,x):
+        x_st = self.apply_layers(x,self.st_layers)
+        x_st = torch.round(torch.clamp(x_st,0,9))
+        x_age = self.apply_layers(x,self.age_layers)
+        x_gender = self.apply_layers(x,self.gender_layers)
+        return [x_st,x_age,x_gender]
+    
+    
 class TripletModel(BaseModel):
     
     def __init__(self,encoder=None,decoder=None):
@@ -591,6 +639,23 @@ class TripletModel(BaseModel):
             encoder = TripletFacenetEncoder()
         if decoder is None:
             decoder = TripletFacenetClassifier(encoder.embedding_size)
+        self.encoder = encoder
+        self.decoder = decoder
+        self.name_string = encoder.get_identifier() + decoder.get_identifier()
+    
+    def forward(self,x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
+    
+class TripletModel2(BaseModel):
+    
+    def __init__(self,encoder=None,decoder=None):
+        super(TripletModel,self).__init__()
+        if encoder is None:
+            encoder = TripletFacenetEncoder()
+        if decoder is None:
+            decoder = TripletClassifierRegressor(encoder.embedding_size)
         self.encoder = encoder
         self.decoder = decoder
         self.name_string = encoder.get_identifier() + decoder.get_identifier()
