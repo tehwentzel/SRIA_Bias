@@ -245,3 +245,15 @@ def macro_f1(y,ypred):
         avg_precision += precision/nclass
         avg_recall += recall/nclass
     return avg_f1, avg_precision, avg_recall
+
+def torch_disparity(y,ypred):
+    nclass = len(torch.unique(y))
+    results = torch.zeros(nclass)
+    if ypred.ndim > 1:
+        ypred = torch.argmax(ypred,1).long()
+    for i,c in enumerate(torch.unique(y)):
+        yy = (y == c)
+        yypred = (ypred == c).fl
+        good = (yy == yypred).float().sum()/yy.float().sum()
+        results[i] = good
+    return torch.max(results) - torch.min(results)

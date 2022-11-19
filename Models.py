@@ -473,6 +473,64 @@ class DualHistogramModel(DualFacenetModel):
         return [x_st,x_age,x_gender]
 
     
+class SimpleEncoder(BaseModel):
+    #model to use as a triplet loss
+    #will tak in list of three image batchs
+    #returns list of tree embeedidng batchs + predictions on first batch of images
+    def __init__(self,
+                 base_model = None,
+                 feature_extractor = None,
+                 hidden_dims = [500,500],
+                 embedding_dropout=.3,
+                 base_name='model',
+                 fine_tune=True,
+                 **kwargs):
+        super(SimpleEncoder,self).__init__()
+                               
+        if base_model is None:
+            base_model = InceptionResnetV1(pretrained='vggface2')
+            base_name = 'dualfacenet'
+        for param in base_model.parameters():
+            param.requires_grad = fine_tune
+            
+        self.base_model = base_model
+        
+        self.embedding_dropout = torch.nn.Dropout(p=embedding_dropout)
+        curr_dim = base_model.logits.in_features
+        hidden_layers = []
+        
+        for i,size in enumerate(hidden_dims):
+            layer = torch.nn.Linear(curr_dim, size)
+            curr_dim = size
+            hidden_layers.append(layer)
+            hidden_layers.append(torch.nn.ReLU())
+            
+        self.hidden_layers = torch.nn.ModuleList(hidden_layers)
+        
+        self.embedding_size = hidden_dims[-1]
+        self.norm = torch.nn.BatchNorm1d(self.embedding_size)
+        
+        def add_dims(n,dims,prefix):
+            for dim in dims:
+                n += '_'+prefix+str(dim)
+            return n
+        
+        name_string = 'dualencoder_' + base_name
+        name_string = add_dims(name_string,hidden_dims,'h')
+        name_string += '_ed' + str(embedding_dropout).replace('0.','')
+        self.name_string=name_string
+        
+    def forward(self,x):
+        x = self.base_model(x)
+        x = self.embedding_dropout(x)
+        for layer in self.hidden_layers:
+            x = layer(x)
+        x = self.norm(x)
+        return x
+    
+
+        
+    
 class TripletFacenetEncoder(BaseModel):
     #model to use as a triplet loss
     #will tak in list of three image batchs
@@ -536,6 +594,22 @@ class TripletFacenetEncoder(BaseModel):
         x = self.norm(x)
         return x
     
+class FrozenDualEncoder(TripletFacenetEncoder):
+    #model to use as a triplet loss
+    #will tak in list of three image batchs
+    #returns list of tree embeedidng batchs + predictions on first batch of images
+    def __init__(self,base_model = None,**kwargs):
+        if base_model is None:
+            base_model = ResNet18()
+        super(FrozenDualEncoder,self).__init__(base_model=base_model,**kwargs)
+
+        for param in self.feature_extractor.parameters():
+            param.requires_grad = False
+        for param in self.base_model.parameters():
+            param.requires_grad = False
+            
+        self.name_string= 'frozen_' + self.name_string
+        
 class TripletFacenetClassifier(BaseModel):
     #model to use as a triplet loss
     #will tak in list of three image batchs
@@ -589,7 +663,7 @@ class TripletClassifierRegressor(BaseModel):
     #returns list of tree embeedidng batchs + predictions on first batch of images
     def __init__(self,
                  input_dim,
-                 st_dims = [400],
+                 st_dims = [400,100],
                  age_dims = [400],
                  gender_dims = [400],
                  st_dropout = .2,
@@ -625,7 +699,7 @@ class TripletClassifierRegressor(BaseModel):
         
     def forward(self,x):
         x_st = self.apply_layers(x,self.st_layers)
-        x_st = torch.round(torch.clamp(x_st,0,9))
+        x_st = torch.clamp(x_st,min=0,max=9)
         x_age = self.apply_layers(x,self.age_layers)
         x_gender = self.apply_layers(x,self.gender_layers)
         return [x_st,x_age,x_gender]
