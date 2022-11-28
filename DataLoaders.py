@@ -407,6 +407,69 @@ def TripletFaceGenerator(labels,data_root,
     print(dataset.df.shape)
     return torch.utils.data.DataLoader(dataset,batch_size=batch_size,shuffle=shuffle,num_workers=workers)
 
+class TripletFaceGeneratorIterator2(TripletFaceGeneratorIterator):
+    
+    #alternative generator that returns [image,anchor,bias, [skintone, age, gender]]
+    #where anchor is high-confidance in same class, bias is a counterfactual
+    #assumes I've preprocessed the  input dataframe to have anchor and bias weights for each subgroup in order skintone-age-gender
+    #i havent tested if preloading works since i dont use it
+    
+    def __init__(self,df,root,nonface_bias_prob=.01,skintone_patch_anchor_prob=0,**kwargs):
+        super(TripletFaceGeneratorIterator2,self).__init__(df,root,**kwargs)
+        
+    
+    def process_files(self,subdf,**kwargs):
+        #will return a list of arrays [images, label1, label2, label3, etc]
+        baseimage = self.process_single_image(subdf)
+        subgroup = subdf['subgroup']
+        base_weights  = self.df[subgroup + '_anchor'] + self.df[subgroup + '_bias']
+        labels = []
+        anchors = []
+        biases = []
+        for label in self.labels:
+            y = subdf[label]
+            in_class = self.df[label].apply(lambda x: x == y)
+            not_in_class = self.df[label].apply(lambda x: x != y)
+            anchor_weights = base_weights * in_class
+            bias_weights = base_weights * not_in_class
+            
+            if np.random.random() > self.skintone_patch_anchor_prob:
+                anchor = self.df.sample(n=1,weights=anchor_weights).iloc[0]
+                anchorimage = self.process_single_image(anchor)
+            else:
+                anchorimage = self.get_skintone_image(subdf['skin_tone'])
+    #         assert(subgroup == anchor['subgroup'])
+            if self.use_nonface():
+                bias = self.nonface_df.sample(n=1).iloc[0]
+            else:
+                bias = self.df.sample(n=1,weights=bias_weights).iloc[0]
+
+            biasimage = self.process_single_image(bias)
+            labels.append(y)
+            anchors.append(anchorimage)
+            biases.append(biasimage)
+        output = [baseimage, anchors, biases, labels]
+        return output
+
+def TripletFaceGenerator2(labels,data_root,
+                         batch_size=100,
+                         workers=2,
+                         random_upsample=False,
+                         fit_df=None, 
+                         softmax=False,
+                         upsample=False,**kwargs):
+    if random_upsample:
+        upsampler = get_random_upsampler(labels,fit_df=fit_df,softmax=softmax)
+        upsample = False
+        shuffle=False
+    else:
+        upsampler=None
+    dataset = TripletFaceGeneratorIterator2(labels,data_root,fit_df=fit_df,upsample=upsample,**kwargs)
+    if not random_upsample:
+        shuffle=dataset.shuffle_on_epoch
+    print(dataset.df.shape)
+    return torch.utils.data.DataLoader(dataset,batch_size=batch_size,shuffle=shuffle,num_workers=workers)
+
 class UnsupervisedTripletGeneratorIterator(FaceGeneratorIterator):
     
     #alternative generator that returns [image,anchor,bias, [skintone, age, gender]]
