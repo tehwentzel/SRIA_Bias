@@ -740,15 +740,15 @@ class TripletModel(BaseModel):
     
 class TripletModel2(BaseModel):
     
-    def __init__(self,encoder=None,decoder=None):
+    def __init__(self,encoder=None,decoder=None,name=''):
         super(TripletModel2,self).__init__()
         if encoder is None:
             encoder = TripletFacenetEncoder()
         if decoder is None:
-            decoder = TripletClassifierRegressor(encoder.embedding_size)
+            decoder = TripletFacenetClassifier(encoder.embedding_size)
         self.encoder = encoder
         self.decoder = decoder
-        self.name_string = encoder.get_identifier() + decoder.get_identifier()
+        self.name_string = name + encoder.get_identifier() + decoder.get_identifier()
     
     def forward(self,x):
         x = self.encoder(x)
