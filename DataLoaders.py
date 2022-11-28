@@ -145,17 +145,17 @@ class Augmentor():
             img = np.flip(img,1)
         elif key > .66:
             img = np.flip(img,2)
-        #90% change of rotating
-        if key < .9:
-            angle = (self.random_range(.01,.99)*360 - 180)
-            rgb = len(img.shape) == 3
-            if rgb:
-                bg_color = np.mean(img[:bg_patch[0], :bg_patch[1], :], axis=(0,1))
-            else:
-                bg_color = np.mean(img[:bg_patch[0], :bg_patch[1]])
-            key = np.random.random
-            mask = [img <= 0, np.any(img <= 0, axis=-1)][rgb]
-            img[mask] = bg_color
+#         90% change of rotating
+#         if key < .9:
+        angle = (self.random_range(.01,.99)*360 - 180)
+        rgb = len(img.shape) == 3
+        if rgb:
+            bg_color = np.mean(img[:bg_patch[0], :bg_patch[1], :], axis=(0,1))
+        else:
+            bg_color = np.mean(img[:bg_patch[0], :bg_patch[1]])
+        img = rotate(img,angle=angle)
+        mask = [img <= 0, np.any(img <= 0, axis=-1)][rgb]
+        img[mask] = bg_color
         return img
     
     def gaussian_noise(self,img, mean=0):
@@ -329,7 +329,7 @@ class TripletFaceGeneratorIterator(FaceGeneratorIterator):
     #assumes I've preprocessed the  input dataframe to have anchor and bias weights for each subgroup in order skintone-age-gender
     #i havent tested if preloading works since i dont use it
     
-    def __init__(self,df,root,nonface_bias_prob=.01,skintone_patch_anchor_prob=.1,**kwargs):
+    def __init__(self,df,root,nonface_bias_prob=.01,skintone_patch_anchor_prob=0,**kwargs):
         super(TripletFaceGeneratorIterator,self).__init__(df,root,**kwargs)
         self.nonface_df = df[~df.is_face]
         if self.nonface_df.shape[0] < 5 or nonface_bias_prob <= .0001:
