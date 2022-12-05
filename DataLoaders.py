@@ -440,7 +440,7 @@ class TripletFaceGeneratorIterator2(TripletFaceGeneratorIterator):
         #will return a list of arrays [images, label1, label2, label3, etc]
         
         if self.smote_prob > 0 and np.random.random() < self.smote_prob:
-            base_image = self.smotify(subdf)
+            baseimage = self.smotify(subdf)
         else:
             baseimage = self.process_single_image(subdf)
         subgroup = subdf['subgroup']
